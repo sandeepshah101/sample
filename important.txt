@@ -44,10 +44,11 @@ def clone_vm(client, instance_name):
     # Create new VM directory
     run_command(client, f"mkdir -p /vmfs/volumes/{DATASTORE}/{instance_name}")
 
-    # Copy VMX and VMDK files
+    # Copy VMX and VMDK files with correct names
     commands = [
         f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmx /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx",
         f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmdk /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmdk",
+        f"sed -i 's/{WINDOWS_TEMPLATE_VM}/{instance_name}/g' /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx",  # Update VM name inside the VMX file
         f"vim-cmd solo/registervm /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx"
     ]
 
@@ -56,6 +57,11 @@ def clone_vm(client, instance_name):
         time.sleep(2)  # Ensure ESXi has time to register the VM
 
     return get_vm_id(client, instance_name)
+
+def power_on_vm(client, vm_id):
+    """Powers on a VM by its ID."""
+    command = f"vim-cmd vmsvc/power.on {vm_id}"
+    run_command(client, command)
 
 def suspend_vm(client, vm_id):
     """Suspends a VM by its ID."""
@@ -74,6 +80,8 @@ def create_sandbox_instances():
         
         vm_id = clone_vm(client, instance_name)
         if vm_id:
+            power_on_vm(client, vm_id)  # ✅ Power on the VM before suspending
+            time.sleep(5)  # Wait for VM to stabilize before suspending
             suspend_vm(client, vm_id)
             print(f"Instance {instance_name} (ID: {vm_id}) suspended.")
         else:
