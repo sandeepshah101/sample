@@ -4,10 +4,12 @@ import time
 # ESXi Server Configuration
 ESXI_HOST = "your-esxi-host-ip"
 ESXI_USER = "your-esxi-username"
-ESXI_PASSWORD = "your-esxi-password"  # Use SSH keys instead for better security
+ESXI_PASSWORD = "your-esxi-password"  # Use SSH keys instead for security
 WINDOWS_TEMPLATE_VM = "Windows_Sandbox_Template"
 NUM_INSTANCES = 3  # Number of Windows instances to create
 INSTANCE_PREFIX = "WinSandbox"  # Naming prefix
+DATASTORE = "datastore1"  # Change according to your ESXi setup
+SNAPSHOT_NAME = "BaseSnapshot"  # Snapshot to be used for cloning
 
 def connect_esxi():
     """Establish SSH connection to ESXi."""
@@ -39,15 +41,26 @@ def get_vm_id(client, vm_name):
     return None
 
 def clone_vm(client, instance_name):
-    """Clones a Windows template VM."""
+    """Creates a linked clone from a snapshot."""
     template_vm_id = get_vm_id(client, WINDOWS_TEMPLATE_VM)
     if not template_vm_id:
         print(f"Template VM '{WINDOWS_TEMPLATE_VM}' not found.")
         return None
     
-    command = f"vim-cmd vmsvc/clone {template_vm_id} {instance_name}"
-    run_command(client, command)
-    time.sleep(2)  # Wait to ensure VM is created
+    # Path to the VMX file of the new VM
+    vmx_path = f"/vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx"
+
+    # Clone by creating a new VM directory and using a snapshot
+    commands = [
+        f"mkdir -p /vmfs/volumes/{DATASTORE}/{instance_name}",
+        f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmx {vmx_path}",
+        f"vim-cmd solo/registervm {vmx_path}"  # Register the new VM
+    ]
+
+    for cmd in commands:
+        run_command(client, cmd)
+        time.sleep(2)  # Ensure ESXi has time to register the VM
+
     return get_vm_id(client, instance_name)
 
 def suspend_vm(client, vm_id):
