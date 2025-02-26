@@ -1,53 +1,78 @@
-import subprocess
+import paramiko
+import time
 
-# Configuration
+# ESXi Server Configuration
 ESXI_HOST = "your-esxi-host-ip"
 ESXI_USER = "your-esxi-username"
-ESXI_PASSWORD = "your-esxi-password"
+ESXI_PASSWORD = "your-esxi-password"  # Use SSH keys instead for better security
 WINDOWS_TEMPLATE_VM = "Windows_Sandbox_Template"
 NUM_INSTANCES = 3  # Number of Windows instances to create
 INSTANCE_PREFIX = "WinSandbox"  # Naming prefix
 
-def run_ssh_command(command):
-    """Executes a remote SSH command on ESXi."""
-    ssh_cmd = f"ssh {ESXI_USER}@{ESXI_HOST} \"{command}\""
+def connect_esxi():
+    """Establish SSH connection to ESXi."""
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    
     try:
-        result = subprocess.run(ssh_cmd, shell=True, capture_output=True, text=True)
-        return result.stdout.strip()
+        client.connect(ESXI_HOST, username=ESXI_USER, password=ESXI_PASSWORD, timeout=10)
+        return client
     except Exception as e:
-        print(f"Error executing command: {e}")
+        print(f"Error connecting to ESXi: {e}")
         return None
 
-def get_vm_id(vm_name):
-    """Retrieves the VM ID for a given VM name."""
-    output = run_ssh_command("vim-cmd vmsvc/getallvms")
+def run_command(client, command):
+    """Runs a shell command on ESXi via SSH."""
+    stdin, stdout, stderr = client.exec_command(command)
+    output = stdout.read().decode().strip()
+    error = stderr.read().decode().strip()
+    if error:
+        print(f"Error executing command '{command}': {error}")
+    return output
+
+def get_vm_id(client, vm_name):
+    """Retrieves the VM ID of a given VM name."""
+    output = run_command(client, "vim-cmd vmsvc/getallvms")
     for line in output.split("\n"):
         if vm_name in line:
             return line.split()[0]  # VM ID is the first column
     return None
 
-def clone_vm(instance_name):
+def clone_vm(client, instance_name):
     """Clones a Windows template VM."""
-    command = f"vim-cmd vmsvc/clone {get_vm_id(WINDOWS_TEMPLATE_VM)} {instance_name}"
-    run_ssh_command(command)
+    template_vm_id = get_vm_id(client, WINDOWS_TEMPLATE_VM)
+    if not template_vm_id:
+        print(f"Template VM '{WINDOWS_TEMPLATE_VM}' not found.")
+        return None
+    
+    command = f"vim-cmd vmsvc/clone {template_vm_id} {instance_name}"
+    run_command(client, command)
+    time.sleep(2)  # Wait to ensure VM is created
+    return get_vm_id(client, instance_name)
 
-def suspend_vm(vm_id):
-    """Suspends a VM by ID."""
+def suspend_vm(client, vm_id):
+    """Suspends a VM by its ID."""
     command = f"vim-cmd vmsvc/power.suspend {vm_id}"
-    run_ssh_command(command)
+    run_command(client, command)
 
 def create_sandbox_instances():
     """Creates multiple suspended Windows sandbox instances."""
+    client = connect_esxi()
+    if not client:
+        return
+
     for i in range(NUM_INSTANCES):
         instance_name = f"{INSTANCE_PREFIX}_{i+1}"
         print(f"Creating instance: {instance_name}")
-        clone_vm(instance_name)
-        vm_id = get_vm_id(instance_name)
+        
+        vm_id = clone_vm(client, instance_name)
         if vm_id:
-            suspend_vm(vm_id)
-            print(f"Instance {instance_name} suspended.")
+            suspend_vm(client, vm_id)
+            print(f"Instance {instance_name} (ID: {vm_id}) suspended.")
         else:
-            print(f"Failed to find VM ID for {instance_name}")
+            print(f"Failed to create or find VM ID for {instance_name}")
+    
+    client.close()
 
 if __name__ == "__main__":
     create_sandbox_instances()
