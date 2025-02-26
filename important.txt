@@ -1,15 +1,14 @@
 import paramiko
 import time
 
-# ESXi Server Configuration
+# ESXi Configuration
 ESXI_HOST = "your-esxi-host-ip"
 ESXI_USER = "your-esxi-username"
-ESXI_PASSWORD = "your-esxi-password"  # Use SSH keys instead for security
-WINDOWS_TEMPLATE_VM = "Windows_Sandbox_Template"
+ESXI_PASSWORD = "your-esxi-password"  # Use SSH keys instead for better security
+WINDOWS_TEMPLATE_VM = "Windows_template_VM"
 NUM_INSTANCES = 3  # Number of Windows instances to create
 INSTANCE_PREFIX = "WinSandbox"  # Naming prefix
 DATASTORE = "datastore1"  # Change according to your ESXi setup
-SNAPSHOT_NAME = "BaseSnapshot"  # Snapshot to be used for cloning
 
 def connect_esxi():
     """Establish SSH connection to ESXi."""
@@ -41,20 +40,15 @@ def get_vm_id(client, vm_name):
     return None
 
 def clone_vm(client, instance_name):
-    """Creates a linked clone from a snapshot."""
-    template_vm_id = get_vm_id(client, WINDOWS_TEMPLATE_VM)
-    if not template_vm_id:
-        print(f"Template VM '{WINDOWS_TEMPLATE_VM}' not found.")
-        return None
-    
-    # Path to the VMX file of the new VM
-    vmx_path = f"/vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx"
+    """Manually clones a VM by copying files and registering it."""
+    # Create new VM directory
+    run_command(client, f"mkdir -p /vmfs/volumes/{DATASTORE}/{instance_name}")
 
-    # Clone by creating a new VM directory and using a snapshot
+    # Copy VMX and VMDK files
     commands = [
-        f"mkdir -p /vmfs/volumes/{DATASTORE}/{instance_name}",
-        f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmx {vmx_path}",
-        f"vim-cmd solo/registervm {vmx_path}"  # Register the new VM
+        f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmx /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx",
+        f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmdk /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmdk",
+        f"vim-cmd solo/registervm /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx"
     ]
 
     for cmd in commands:
