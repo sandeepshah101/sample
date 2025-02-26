@@ -48,8 +48,7 @@ def clone_vm_from_snapshot(client, instance_name):
     # Copy VMX and VMDK files with correct names
     commands = [
         f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmx /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx",
-        f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmdk /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmdk",
-        f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}-flat.vmdk /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}-flat.vmdk",
+        f"vmkfstools -i /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmdk /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmdk -d thin",
         f"sed -i 's/{WINDOWS_TEMPLATE_VM}/{instance_name}/g' /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx",  # Update VM name inside the VMX file
         f"vim-cmd solo/registervm /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx"
     ]
