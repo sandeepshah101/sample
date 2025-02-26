@@ -1,45 +1,53 @@
-import paramiko
+import subprocess
 
-# ESXi Host details
+# Configuration
 ESXI_HOST = "your-esxi-host-ip"
-ESXI_USER = "root"  # ESXi uses root for SSH access
-ESXI_PASS = "your-password"
+ESXI_USER = "your-esxi-username"
+ESXI_PASSWORD = "your-esxi-password"
+WINDOWS_TEMPLATE_VM = "Windows_Sandbox_Template"
+NUM_INSTANCES = 3  # Number of Windows instances to create
+INSTANCE_PREFIX = "WinSandbox"  # Naming prefix
 
-def get_vm_list():
+def run_ssh_command(command):
+    """Executes a remote SSH command on ESXi."""
+    ssh_cmd = f"ssh {ESXI_USER}@{ESXI_HOST} \"{command}\""
     try:
-        # Initialize SSH client
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-        # Connect to ESXi host
-        client.connect(ESXI_HOST, username=ESXI_USER, password=ESXI_PASS)
-
-        # Run the vim-cmd command
-        stdin, stdout, stderr = client.exec_command("vim-cmd vmsvc/getallvms")
-
-        # Read output
-        output = stdout.read().decode()
-
-        # Close connection
-        client.close()
-
-        # Parse VM details
-        vm_list = []
-        lines = output.split("\n")[1:]  # Skip the header line
-        for line in lines:
-            if line.strip():  # Ignore empty lines
-                parts = line.split()
-                vm_id = parts[0]
-                vm_name = parts[1]
-                vm_list.append((vm_id, vm_name))
-
-        # Print VM details
-        print(f"Total VMs found: {len(vm_list)}")
-        for vm_id, vm_name in vm_list:
-            print(f"VM ID: {vm_id}, VM Name: {vm_name}")
-
+        result = subprocess.run(ssh_cmd, shell=True, capture_output=True, text=True)
+        return result.stdout.strip()
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error executing command: {e}")
+        return None
 
-# Run the function
-get_vm_list()
+def get_vm_id(vm_name):
+    """Retrieves the VM ID for a given VM name."""
+    output = run_ssh_command("vim-cmd vmsvc/getallvms")
+    for line in output.split("\n"):
+        if vm_name in line:
+            return line.split()[0]  # VM ID is the first column
+    return None
+
+def clone_vm(instance_name):
+    """Clones a Windows template VM."""
+    command = f"vim-cmd vmsvc/clone {get_vm_id(WINDOWS_TEMPLATE_VM)} {instance_name}"
+    run_ssh_command(command)
+
+def suspend_vm(vm_id):
+    """Suspends a VM by ID."""
+    command = f"vim-cmd vmsvc/power.suspend {vm_id}"
+    run_ssh_command(command)
+
+def create_sandbox_instances():
+    """Creates multiple suspended Windows sandbox instances."""
+    for i in range(NUM_INSTANCES):
+        instance_name = f"{INSTANCE_PREFIX}_{i+1}"
+        print(f"Creating instance: {instance_name}")
+        clone_vm(instance_name)
+        vm_id = get_vm_id(instance_name)
+        if vm_id:
+            suspend_vm(vm_id)
+            print(f"Instance {instance_name} suspended.")
+        else:
+            print(f"Failed to find VM ID for {instance_name}")
+
+if __name__ == "__main__":
+    create_sandbox_instances()
