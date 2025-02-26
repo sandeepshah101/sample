@@ -41,21 +41,22 @@ def get_vm_id(client, vm_name):
     return None
 
 def clone_vm(client, instance_name):
-    """Clones the entire VM directory, including snapshots."""
+    """Clones the VM using vmkfstools."""
     # Create new VM directory
     run_command(client, f"mkdir -p /vmfs/volumes/{DATASTORE}/{instance_name}")
 
-    # Copy the entire VM directory
-    run_command(client, f"cp -r /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/* /vmfs/volumes/{DATASTORE}/{instance_name}/")
+    # Copy VMX file
+    run_command(client, f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmx /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx")
 
     # Update VMX file to reference the correct VMDK files
-    vmx_file_path = f"/vmfs/volumes/{DATASTORE}/{instance_name}/{WINDOWS_TEMPLATE_VM}.vmx"
-    new_vmx_file_path = f"/vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx"
-    run_command(client, f"mv {vmx_file_path} {new_vmx_file_path}")
-    run_command(client, f"sed -i 's/{WINDOWS_TEMPLATE_VM}/{instance_name}/g' {new_vmx_file_path}")
+    vmx_file_path = f"/vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx"
+    run_command(client, f"sed -i 's/{WINDOWS_TEMPLATE_VM}/{instance_name}/g' {vmx_file_path}")
+
+    # Clone the VMDK files using vmkfstools
+    run_command(client, f"vmkfstools -i /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmdk /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmdk -d thin")
 
     # Register the new VM
-    run_command(client, f"vim-cmd solo/registervm {new_vmx_file_path}")
+    run_command(client, f"vim-cmd solo/registervm {vmx_file_path}")
 
     return get_vm_id(client, instance_name)
 
