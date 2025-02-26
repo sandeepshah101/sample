@@ -6,6 +6,7 @@ ESXI_HOST = "your-esxi-host-ip"
 ESXI_USER = "your-esxi-username"
 ESXI_PASSWORD = "your-esxi-password"  # Use SSH keys instead for better security
 WINDOWS_TEMPLATE_VM = "Windows_template_VM"
+SNAPSHOT_NAME = "suspended_snapshot"  # Name of the snapshot in suspended state
 NUM_INSTANCES = 3  # Number of Windows instances to create
 INSTANCE_PREFIX = "WinSandbox"  # Naming prefix
 DATASTORE = "datastore1"  # Change according to your ESXi setup
@@ -39,8 +40,8 @@ def get_vm_id(client, vm_name):
             return line.split()[0]  # VM ID is the first column
     return None
 
-def clone_vm(client, instance_name):
-    """Manually clones a VM by copying files and registering it."""
+def clone_vm_from_snapshot(client, instance_name):
+    """Clones a VM from a snapshot."""
     # Create new VM directory
     run_command(client, f"mkdir -p /vmfs/volumes/{DATASTORE}/{instance_name}")
 
@@ -48,6 +49,7 @@ def clone_vm(client, instance_name):
     commands = [
         f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmx /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx",
         f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmdk /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmdk",
+        f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}-flat.vmdk /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}-flat.vmdk",
         f"sed -i 's/{WINDOWS_TEMPLATE_VM}/{instance_name}/g' /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx",  # Update VM name inside the VMX file
         f"vim-cmd solo/registervm /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx"
     ]
@@ -56,7 +58,13 @@ def clone_vm(client, instance_name):
         run_command(client, cmd)
         time.sleep(2)  # Ensure ESXi has time to register the VM
 
-    return get_vm_id(client, instance_name)
+    # Revert the new VM to the snapshot state
+    vm_id = get_vm_id(client, instance_name)
+    if vm_id:
+        run_command(client, f"vim-cmd vmsvc/snapshot.revert {vm_id} 0 1")  # Revert to the first snapshot (index 0)
+        time.sleep(5)  # Wait for the revert operation to complete
+
+    return vm_id
 
 def power_on_vm(client, vm_id):
     """Powers on a VM by its ID."""
@@ -78,7 +86,7 @@ def create_sandbox_instances():
         instance_name = f"{INSTANCE_PREFIX}_{i+1}"
         print(f"Creating instance: {instance_name}")
         
-        vm_id = clone_vm(client, instance_name)
+        vm_id = clone_vm_from_snapshot(client, instance_name)
         if vm_id:
             power_on_vm(client, vm_id)  # ✅ Power on the VM before suspending
             time.sleep(5)  # Wait for VM to stabilize before suspending
