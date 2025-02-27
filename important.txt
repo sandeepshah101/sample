@@ -49,11 +49,16 @@ def clone_vm(client, instance_name):
     for ext in config_extensions:
         run_command(client, f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/*{ext} /vmfs/volumes/{DATASTORE}/{instance_name}/")
 
-    # Clone the VMDK files using vmkfstools
-    vmdk_files = run_command(client, f"ls /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/*.vmdk").split()
-    for vmdk_file in vmdk_files:
-        new_vmdk_file = vmdk_file.replace(WINDOWS_TEMPLATE_VM, instance_name)
-        run_command(client, f"vmkfstools -i {vmdk_file} {new_vmdk_file} -d thin")
+    # Clone the base VMDK file using vmkfstools
+    base_vmdk_file = f"/vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmdk"
+    new_base_vmdk_file = f"/vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmdk"
+    run_command(client, f"vmkfstools -i {base_vmdk_file} {new_base_vmdk_file} -d thin")
+
+    # Copy snapshot VMDK files and sesparse files
+    snapshot_files = run_command(client, f"ls /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/*.vmdk | grep -v '{WINDOWS_TEMPLATE_VM}.vmdk'").split()
+    for snapshot_file in snapshot_files:
+        new_snapshot_file = snapshot_file.replace(WINDOWS_TEMPLATE_VM, instance_name)
+        run_command(client, f"cp {snapshot_file} {new_snapshot_file}")
 
     # Copy .vmem and .vmsn files for the suspended state
     suspended_extensions = ['.vmsn', '.vmem']
