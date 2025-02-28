@@ -6,6 +6,7 @@ ESXI_HOST = "your-esxi-host-ip"
 ESXI_USER = "your-esxi-username"
 ESXI_PASSWORD = "your-esxi-password"  # Use SSH keys instead for better security
 WINDOWS_TEMPLATE_VM = "Windows_template_VM"
+SNAPSHOT_NAME = "suspended_snapshot"  # Name of the snapshot in suspended state
 NUM_INSTANCES = 3  # Number of Windows instances to create
 INSTANCE_PREFIX = "WinSandbox"  # Naming prefix
 DATASTORE = "datastore1"  # Change according to your ESXi setup
@@ -39,51 +40,39 @@ def get_vm_id(client, vm_name):
             return line.split()[0]  # VM ID is the first column
     return None
 
-def clone_vm(client, instance_name):
-    """Clones the entire VM directory, including snapshots."""
+def clone_vm_from_snapshot(client, instance_name):
+    """Clones a VM from a snapshot."""
     # Create new VM directory
     run_command(client, f"mkdir -p /vmfs/volumes/{DATASTORE}/{instance_name}")
 
-    # Copy VM configuration and snapshot metadata files
-    config_extensions = ['.vmx', '.vmxf', '.vmsd', '.nvram']
-    for ext in config_extensions:
-        run_command(client, f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/*{ext} /vmfs/volumes/{DATASTORE}/{instance_name}/")
+    # Copy VMX and VMDK files with correct names
+    commands = [
+        f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmx /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx",
+        f"vmkfstools -i /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmdk /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmdk -d thin",
+        f"sed -i 's/{WINDOWS_TEMPLATE_VM}/{instance_name}/g' /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx",  # Update VM name inside the VMX file
+        f"vim-cmd solo/registervm /vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx"
+    ]
 
-    # Clone the base VMDK file using vmkfstools
-    base_vmdk_file = f"/vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/{WINDOWS_TEMPLATE_VM}.vmdk"
-    new_base_vmdk_file = f"/vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmdk"
-    run_command(client, f"vmkfstools -i {base_vmdk_file} {new_base_vmdk_file} -d thin")
+    for cmd in commands:
+        run_command(client, cmd)
+        time.sleep(2)  # Ensure ESXi has time to register the VM
 
-    # Copy snapshot VMDK files and sesparse files
-    snapshot_files = run_command(client, f"ls /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/*.vmdk | grep -v '{WINDOWS_TEMPLATE_VM}.vmdk'").split()
-    for snapshot_file in snapshot_files:
-        new_snapshot_file = snapshot_file.replace(WINDOWS_TEMPLATE_VM, instance_name)
-        run_command(client, f"cp {snapshot_file} {new_snapshot_file}")
+    # Revert the new VM to the snapshot state
+    vm_id = get_vm_id(client, instance_name)
+    if vm_id:
+        run_command(client, f"vim-cmd vmsvc/snapshot.revert {vm_id} 0 1")  # Revert to the first snapshot (index 0)
+        time.sleep(5)  # Wait for the revert operation to complete
 
-    # Copy .vmem and .vmsn files for the suspended state
-    suspended_extensions = ['.vmsn', '.vmem']
-    for ext in suspended_extensions:
-        run_command(client, f"cp /vmfs/volumes/{DATASTORE}/{WINDOWS_TEMPLATE_VM}/*{ext} /vmfs/volumes/{DATASTORE}/{instance_name}/")
-
-    # Update VMX file to reference the correct VMDK files
-    vmx_file_path = f"/vmfs/volumes/{DATASTORE}/{instance_name}/{WINDOWS_TEMPLATE_VM}.vmx"
-    new_vmx_file_path = f"/vmfs/volumes/{DATASTORE}/{instance_name}/{instance_name}.vmx"
-    run_command(client, f"mv {vmx_file_path} {new_vmx_file_path}")
-    run_command(client, f"sed -i 's/{WINDOWS_TEMPLATE_VM}/{instance_name}/g' {new_vmx_file_path}")
-
-    # Register the new VM
-    run_command(client, f"vim-cmd solo/registervm {new_vmx_file_path}")
-
-    return get_vm_id(client, instance_name)
-
-def revert_to_snapshot(client, vm_id):
-    """Reverts a VM to the specified snapshot."""
-    command = f"vim-cmd vmsvc/snapshot.revert {vm_id} 0 1"  # Revert to the first snapshot (index 0)
-    run_command(client, command)
+    return vm_id
 
 def power_on_vm(client, vm_id):
     """Powers on a VM by its ID."""
     command = f"vim-cmd vmsvc/power.on {vm_id}"
+    run_command(client, command)
+
+def suspend_vm(client, vm_id):
+    """Suspends a VM by its ID."""
+    command = f"vim-cmd vmsvc/power.suspend {vm_id}"
     run_command(client, command)
 
 def create_sandbox_instances():
@@ -96,11 +85,12 @@ def create_sandbox_instances():
         instance_name = f"{INSTANCE_PREFIX}_{i+1}"
         print(f"Creating instance: {instance_name}")
         
-        vm_id = clone_vm(client, instance_name)
+        vm_id = clone_vm_from_snapshot(client, instance_name)
         if vm_id:
-            revert_to_snapshot(client, vm_id)  # Revert to the snapshot state
-            power_on_vm(client, vm_id)  # Power on the VM to resume from the suspended state
-            print(f"Instance {instance_name} (ID: {vm_id}) created and powered on.")
+            power_on_vm(client, vm_id)  # ✅ Power on the VM before suspending
+            time.sleep(5)  # Wait for VM to stabilize before suspending
+            suspend_vm(client, vm_id)
+            print(f"Instance {instance_name} (ID: {vm_id}) suspended.")
         else:
             print(f"Failed to create or find VM ID for {instance_name}")
     
